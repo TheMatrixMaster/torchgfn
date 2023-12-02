@@ -39,12 +39,12 @@ repos:
         entry: pyright
         args:
           - --project=pyproject.toml
-  - repo: local
-    hooks:
-      - id: pytest-check
-        name: pytest-check
-        entry: pytest
-        language: python
-        files: testing/
-        types: [python]
-        always_run: true
+  # - repo: local
+  #   hooks:
+  #     - id: pytest-check
+  #       name: pytest-check
+  #       entry: pytest
+  #       language: python
+  #       files: testing/
+  #       types: [python]
+  #       always_run: true

@@ -41,7 +41,7 @@ class GFNModule(ABC, nn.Module):
             `gfn.utils.modules`), then the environment preprocessor needs to be an
             `EnumPreprocessor`.
         preprocessor: Preprocessor from the environment.
-        _output_dim_is_checked: Flag for tracking whether the output dimenions of
+        _output_dim_is_checked: Flag for tracking whether the output dimensions of
             the states (after being preprocessed and transformed by the modules) have
             been verified.
     """
@@ -155,6 +155,7 @@ class DiscretePolicyEstimator(GFNModule):
 
     def expected_output_dim(self) -> int:
         if self.is_backward:
+            # maybe the stop action is not included
             return self.n_actions - 1
         else:
             return self.n_actions
@@ -166,6 +167,7 @@ class DiscretePolicyEstimator(GFNModule):
         temperature: float = 1.0,
         sf_bias: float = 0.0,
         epsilon: float = 0.0,
+        is_greedy: bool = False,
     ) -> Categorical:
         """Returns a probability distribution given a batch of states and module output.
 
@@ -176,15 +178,23 @@ class DiscretePolicyEstimator(GFNModule):
                 temperature. Does nothing if set to 0.0 (default), in which case it's
                 on policy.
             epsilon: with probability epsilon, a random action is chosen. Does nothing
-                if set to 0.0 (default), in which case it's on policy."""
+                if set to 0.0 (default), in which case it's on policy.
+            is_greedy: if True, then the greedy action is chosen. Overrides"""
         masks = states.backward_masks if self.is_backward else states.forward_masks
         logits = module_output
         logits[~masks] = -float("inf")
 
         # Forward policy supports exploration in many implementations.
-        if temperature != 1.0 or sf_bias != 0.0 or epsilon != 0.0:
+        if temperature != 1.0 or sf_bias != 0.0 or epsilon != 0.0 or is_greedy:
             logits[:, -1] -= sf_bias
-            probs = torch.softmax(logits / temperature, dim=-1)
+
+            if is_greedy:
+                probs = torch.zeros_like(logits)
+                lmax = logits.argmax(dim=-1, keepdim=True)
+                probs = probs.scatter(dim=-1, index=lmax, value=1.0)
+            else:
+                probs = torch.softmax(logits / temperature, dim=-1)
+
             uniform_dist_probs = masks.float() / masks.sum(dim=-1, keepdim=True)
             probs = (1 - epsilon) * probs + epsilon * uniform_dist_probs
 

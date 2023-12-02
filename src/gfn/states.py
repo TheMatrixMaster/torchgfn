@@ -400,9 +400,9 @@ class DiscreteStates(States, ABC):
                 trajectory - if so, it should be set to True.
         """
         if allow_exit:
-            exit_idx = torch.zeros(self.batch_shape + (1,))
+            exit_idx = torch.zeros(self.batch_shape + (1,), device=self.device)
         else:
-            exit_idx = torch.ones(self.batch_shape + (1,))
+            exit_idx = torch.ones(self.batch_shape + (1,), device=self.device)
         self.forward_masks[torch.cat([cond, exit_idx], dim=-1).bool()] = False
 
     def set_exit_masks(self, batch_idx):
@@ -416,8 +416,10 @@ class DiscreteStates(States, ABC):
         """
         self.forward_masks[batch_idx, :] = torch.cat(
             [
-                torch.zeros((torch.sum(batch_idx),) + self.s0.shape),
-                torch.ones((torch.sum(batch_idx),) + (1,)),
+                torch.zeros(
+                    (torch.sum(batch_idx),) + self.s0.shape, device=self.device
+                ),
+                torch.ones((torch.sum(batch_idx),) + (1,), device=self.device),
             ],
             dim=-1,
         ).bool()
@@ -433,6 +435,6 @@ class DiscreteStates(States, ABC):
         """
         shape = self.batch_shape + (self.n_actions,)
         if set_ones:
-            self.forward_masks = torch.ones(shape).bool()
+            self.forward_masks = torch.ones(shape, device=self.device).bool()
         else:
-            self.forward_masks = torch.zeros(shape).bool()
+            self.forward_masks = torch.zeros(shape, device=self.device).bool()
