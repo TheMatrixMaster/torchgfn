@@ -153,24 +153,16 @@ class QLearning(PFBasedGFlowNet[Trajectories]):
         last_state_idx = torch.cumsum(trajectory_lengths, dim=0) - 1
 
         # Convert trajectories to transitions and remove sink states
-        transitions = trajectories.to_transitions()
-        mask = ~transitions.next_states.is_sink_state
-
-        current_states = transitions.states
-        current_actions = transitions.actions.tensor
-        next_states = transitions.next_states[mask]
+        (
+            current_states,
+            current_actions,
+        ) = trajectories.to_linearized_states_and_actions()
+        current_actions = current_actions.tensor
 
         # Number of states in the batch should match the number of actions
         assert current_states.batch_shape != tuple(
             trajectories.actions.batch_shape
         ), "Something wrong happening with log_pf evaluations"
-
-        # Given that next_states is rolled by 1 to the right, it should have
-        # "num_trajectories" less state count
-        assert (
-            current_states.batch_shape[0] - num_trajectories
-            == next_states.batch_shape[0]
-        ), "Mismatch between current_states and next_states batch shapes"
 
         # Forward pass of the model, returns logits over the action space
         # that we will interpret as Q(s,a) estimates. We use the target network
@@ -180,14 +172,17 @@ class QLearning(PFBasedGFlowNet[Trajectories]):
             Q_sa_target = self.pf_target(current_states)
 
         if self.type_ == "dqn":
-            V_s = torch.max(Q_sa_target, dim=-1)[0]
+            V_s = torch.max(Q_sa, dim=-1)[0]
         elif self.type_ == "ddqn":
             # Q(s, a) = r + γ * Q'(s', argmax Q(s', a'))
             # V_s : (sum(batch.traj_lens),)
-            next_actions = torch.argmax(Q_sa, dim=-1, keepdim=True)
-            V_s = Q_sa_target.gather(dim=-1, index=next_actions).squeeze(-1)
+            # next_actions = torch.argmax(Q_sa, dim=-1, keepdim=True)
+            # V_s = Q_sa_target.gather(dim=-1, index=next_actions).squeeze(-1)
+            V_s = torch.max(Q_sa_target, dim=-1)[0]
         elif self.type_ == "mellowmax":
-            pass
+            raise NotImplementedError
+        else:
+            raise ValueError(f"Unknown type {self.type_}")
 
         # Obtain the Q(s,a) values for the actions taken in the trajectories
         # Q_sa (old) : (sum(batch.traj_lens), |A|)
@@ -218,7 +213,6 @@ class QLearning(PFBasedGFlowNet[Trajectories]):
 
             # The raw index of each state in the batch
             raw_idx = torch.arange(batch_idx.shape[0], device=device)
-            target_idx = raw_idx - first_state_idx[batch_idx] + 2
             # Compute the target index which is the raw index n steps into the future
             target_idx = raw_idx - first_state_idx[batch_idx] + self.n_step
             # Now, to decide whether the target is V(s_{t+n}) or R(\tau), we need to check whether
@@ -241,3 +235,52 @@ class QLearning(PFBasedGFlowNet[Trajectories]):
         }
 
         return loss, info
+
+    # Deprecated
+    def old_loss(self, env: Env, trajectories: Trajectories) -> TT[0, float]:
+        # fill value is the value used for invalid states (sink state usually)
+        if trajectories.is_backward:
+            raise ValueError("Backward trajectories are not supported")
+
+        transitions = trajectories.to_transitions()
+        nmask = ~transitions.next_states.is_sink_state
+
+        log_rewards = transitions.log_rewards
+        is_done = transitions.is_done
+        actions = transitions.actions
+
+        if log_rewards is None:
+            raise ValueError("log_rewards is None")
+
+        states = transitions.states
+        next_states = transitions.next_states[nmask]
+
+        max_next_Q = torch.zeros_like(log_rewards)
+
+        if states.batch_shape != tuple(actions.batch_shape):
+            raise ValueError("Something wrong happening with log_pf evaluations")
+
+        curr_Q = self.pf(states)
+
+        with torch.no_grad():
+            next_Q = self.pf_target(next_states)
+
+        if next_Q.shape[0] != 0:
+            max_next_Q[nmask] = torch.max(next_Q, dim=-1)[0]
+
+        current_Q = curr_Q.gather(dim=-1, index=actions.tensor).squeeze(-1)
+        expected_Q = torch.exp(log_rewards) + self.gamma * max_next_Q
+
+        max_traj_length = trajectories.when_is_done.float().max()
+        avg_traj_length = trajectories.when_is_done.float().mean()
+        max_reward = torch.exp(log_rewards[is_done]).max()
+        avg_reward = torch.exp(log_rewards[is_done]).mean()
+
+        assert is_done.int().sum() == trajectories.n_trajectories
+
+        loss = F.mse_loss(current_Q, expected_Q)
+
+        if torch.isnan(loss):
+            raise ValueError("loss is nan")
+
+        return loss, avg_traj_length, avg_reward, max_traj_length, max_reward

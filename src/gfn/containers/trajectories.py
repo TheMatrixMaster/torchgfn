@@ -277,3 +277,30 @@ class Trajectories(Container):
         terminating_states = self.last_states
         terminating_states.log_rewards = self.log_rewards
         return intermediary_states, terminating_states
+
+    def to_linearized_states_and_actions(self) -> tuple[States, Actions]:
+        """Returns all states and actions in the trajectories, linearized.
+
+        This is useful for the n-step q_learning loss which requires computing the
+        temporal difference over many continuous time steps of the same trajectory.
+
+        Returns: a tuple containing all the states and actions in the trajectories
+        """
+        if self.is_backward:
+            raise NotImplementedError("Backward trajectories are not supported")
+
+        trajectories_states: TT[
+            "n_trajectories", "state_shape", torch.float
+        ] = self.states[:-1].tensor.permute(1, 0, 2)
+
+        trajectories_actions: TT[
+            "n_trajectories", "action_shape", torch.float
+        ] = self.actions.tensor.permute(1, 0, 2)
+
+        states = self.env.States(trajectories_states)
+        actions = self.env.Actions(trajectories_actions)
+
+        states = states[~actions.is_dummy]
+        actions = actions[~actions.is_dummy]
+
+        return states, actions

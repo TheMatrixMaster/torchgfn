@@ -21,6 +21,25 @@ def get_terminating_state_dist_pmf(env: Env, states: States) -> TT["n_states", f
     return torch.tensor(counter_list, dtype=torch.float) / len(states_indices)
 
 
+def get_metrics(trajectories: Trajectories):
+    """
+    Compute some metrics of interest for trajectories.
+    """
+    rewards = torch.exp(trajectories.log_rewards)
+
+    max_traj_length = trajectories.when_is_done.float().max()
+    avg_traj_length = trajectories.when_is_done.float().mean()
+    max_reward = rewards.max()
+    avg_reward = rewards.mean()
+
+    return {
+        "avg_traj_length": avg_traj_length.item(),
+        "avg_reward": avg_reward.item(),
+        "max_traj_length": max_traj_length.item(),
+        "max_reward": max_reward.item(),
+    }
+
+
 def validate(
     env: Env,
     gflownet: GFlowNet,
