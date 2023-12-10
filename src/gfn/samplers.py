@@ -168,3 +168,74 @@ class Sampler:
         )
 
         return trajectories
+
+
+class MixtureSampler(Sampler):
+    """A Sampler that samples actions from a mixture of policies.
+
+    Takes in a list of estimators and a list of weights, and samples actions from
+    a mixture policy calculated as a function of the output logits of each estimator
+    over the action space.
+
+    Attributes:
+        estimators: a list of estimators. The first estimator in this list is assumed to be
+            the "main" estimator, and the others are assumed to be "auxiliary" estimators.
+        weights: a list of weights for each estimator.
+        probability_distribution_kwargs: keyword arguments to be passed to the `to_probability_distribution`
+             method of the estimator. For example, for DiscretePolicyEstimators, the kwargs can contain
+             the `temperature` parameter, `epsilon`, and `sf_bias`.
+    """
+
+    def __init__(
+        self,
+        estimators: [GFNModule],
+        weights: TT["n_estimators", torch.float],
+        mixture_flavor: str = "p_greedy",
+        **probability_distribution_kwargs: Optional[dict],
+    ) -> None:
+        super().__init__(estimators[0], **probability_distribution_kwargs)
+        self.estimators = estimators
+        self.weights = weights
+
+        assert mixture_flavor in ["p_greedy", "high_q"]
+        self.mixture_flavor = mixture_flavor
+
+    def sample_actions(
+        self, env: Env, states: States
+    ) -> Tuple[Actions, TT["batch_shape", torch.float]]:
+        """Samples actions from the given states.
+
+        Args:
+            env: The environment to sample actions from.
+            states (States): A batch of states.
+
+        Returns:
+            A tuple of tensors containing:
+             - An Actions object containing the sampled actions.
+             - A tensor of shape (*batch_shape,) containing the log probabilities of
+                the sampled actions under the probability distribution of the given
+                states.
+        """
+        module_outputs = [estimator(states) for estimator in self.estimators]
+
+        if self.mixture_flavor == "p_greedy":
+            # compute weighted sum of batched logits with weights
+            logits = torch.stack(module_outputs, dim=1)
+            logits = torch.einsum("e,bes->bs", self.weights, logits)
+        elif self.mixture_flavor == "high_q":
+            raise NotImplementedError
+        else:
+            # default to logits of the main estimator
+            logits = module_outputs[0]
+
+        dist = self.estimator.to_probability_distribution(
+            states, logits, **self.probability_distribution_kwargs
+        )
+
+        with torch.no_grad():
+            actions = dist.sample()
+        log_probs = dist.log_prob(actions)
+        if torch.any(torch.isinf(log_probs)):
+            raise RuntimeError("Log probabilities are inf. This should not happen.")
+
+        return env.Actions(actions), log_probs

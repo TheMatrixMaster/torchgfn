@@ -38,7 +38,7 @@ class HyperGrid(DiscreteEnv):
             height (int, optional): height of the grid. Defaults to 4.
             R0 (float, optional): reward parameter R0. Defaults to 0.1.
             R1 (float, optional): reward parameter R1. Defaults to 0.5.
-            R2 (float, optional): reward parameter R1. Defaults to 2.0.
+            R2 (float, optional): reward parameter R2. Defaults to 2.0.
             reward_cos (bool, optional): Which version of the reward to use. Defaults to False.
             device_str (str, optional): "cpu" or "cuda". Defaults to "cpu".
             preprocessor_name (str, optional): "KHot" or "OneHot" or "Identity". Defaults to "KHot".
